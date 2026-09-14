@@ -1,13 +1,16 @@
 package ru.mukapro.app
 
 import android.app.Application
-import com.yandex.mapkit.MapKitFactory
+import org.osmdroid.config.Configuration
 
 class MukaproApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        if (BuildConfig.MAPKIT_API_KEY.isNotBlank()) {
-            MapKitFactory.setApiKey(BuildConfig.MAPKIT_API_KEY)
+        // Инициализация osmdroid вместо Yandex
+        Configuration.getInstance().apply {
+            userAgentValue = packageName
+            osmdroidBasePath = cacheDir
+            osmdroidTileCache = cacheDir
         }
     }
 }
