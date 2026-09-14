@@ -5,10 +5,12 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,7 +20,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -49,21 +50,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.yandex.mapkit.Animation
 import com.yandex.mapkit.MapKitFactory
-import com.yandex.mapkit.geometry.Geometry
-import com.yandex.mapkit.geometry.Point
-import com.yandex.mapkit.geometry.Polyline
-import com.yandex.mapkit.map.CameraPosition
-import com.yandex.mapkit.map.MapView
-import com.yandex.mapkit.map.PlacemarkMapObject
-import com.yandex.mapkit.mapview.MapView as LegacyMapView
-import com.yandex.mapkit.search.Response
-import com.yandex.mapkit.search.SearchFactory
-import com.yandex.mapkit.search.SearchListener
-import com.yandex.mapkit.search.SearchManager
-import com.yandex.mapkit.search.SearchManagerType
-import com.yandex.mapkit.search.SearchOptions
-import com.yandex.mapkit.search.SearchSession
-import com.yandex.mapkit.search.SearchType
 import com.yandex.mapkit.directions.DirectionsFactory
 import com.yandex.mapkit.directions.driving.DrivingOptions
 import com.yandex.mapkit.directions.driving.DrivingRoute
@@ -72,11 +58,19 @@ import com.yandex.mapkit.directions.driving.DrivingRouter
 import com.yandex.mapkit.directions.driving.RequestPoint
 import com.yandex.mapkit.directions.driving.RequestPointType
 import com.yandex.mapkit.directions.driving.VehicleOptions
-import com.yandex.runtime.Error
+import com.yandex.mapkit.geometry.Geometry
+import com.yandex.mapkit.geometry.Point
+import com.yandex.mapkit.map.CameraPosition
 import com.yandex.mapkit.map.ImageProvider
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Paint
+import com.yandex.mapkit.mapview.MapView
+import com.yandex.mapkit.search.Response
+import com.yandex.mapkit.search.SearchFactory
+import com.yandex.mapkit.search.SearchListener
+import com.yandex.mapkit.search.SearchManager
+import com.yandex.mapkit.search.SearchManagerType
+import com.yandex.mapkit.search.SearchOptions
+import com.yandex.mapkit.search.Session
+import com.yandex.runtime.Error
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -111,13 +105,11 @@ fun MukaproApp() {
     val context = LocalContext.current
     var query by remember { mutableStateOf("Патриаршие пруды") }
     var filter by remember { mutableStateOf("ALL") }
-    var selected by remember { mutableStateOf<ParkingPlace?>(null) }
     var status by remember { mutableStateOf("Готовы найти место") }
     var destination by remember { mutableStateOf(Point(55.7650, 37.5930)) }
     var mapViewRef by remember { mutableStateOf<MapView?>(null) }
     var searchManager by remember { mutableStateOf<SearchManager?>(null) }
-    var searchSession by remember { mutableStateOf<SearchSession?>(null) }
-    var route by remember { mutableStateOf<DrivingRoute?>(null) }
+    var searchSession by remember { mutableStateOf<Session?>(null) }
 
     val locationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -145,6 +137,7 @@ fun MukaproApp() {
                             MapView(ctx).also { mv ->
                                 mapViewRef = mv
                                 searchManager = SearchFactory.getInstance().createSearchManager(SearchManagerType.COMBINED)
+                                mv.onStart()
                                 mv.map.move(CameraPosition(Point(55.7650, 37.5930), 14.5f, 0f, 0f))
                                 drawDemoMap(mv, demoParkings, destination)
                             }
@@ -168,11 +161,11 @@ fun MukaproApp() {
                                 val mv = mapViewRef ?: return@Button
                                 val manager = searchManager ?: return@Button
                                 val options = SearchOptions().apply {
-                                    searchTypes = SearchType.GEO.value
                                     resultPageSize = 5
                                     geometry = true
                                 }
                                 status = "Ищем: $query"
+                                searchSession?.cancel()
                                 searchSession = manager.submit(
                                     query,
                                     Geometry.fromPoint(destination),
@@ -205,13 +198,12 @@ fun MukaproApp() {
                     ParkingCard(
                         place = place,
                         onDrive = {
-                            selected = place
                             if (BuildConfig.MAPKIT_API_KEY.isNotBlank()) {
-                                mapViewRef?.let { buildRoute(it, destination, place.point) { r -> route = r; status = "Маршрут построен" } }
-                            }
+                                mapViewRef?.let { buildRoute(it, destination, place.point) { status = "Маршрут построен до: ${place.title}" } }
+                            } else status = "Добавьте API-ключ MapKit для маршрута"
                         },
                         onParked = {
-                            status = "Парковка отмечена. Если зона платная — откройте «Парковки России»."
+                            status = "Парковка отмечена"
                             if (place.type == "PAID") {
                                 val intent = context.packageManager.getLaunchIntentForPackage("ru.mos.parking")
                                 if (intent != null) context.startActivity(intent) else context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://parking.mos.ru/")))
@@ -234,7 +226,10 @@ fun MukaproApp() {
     }
 
     DisposableEffect(Unit) {
-        onDispose { searchSession?.cancel(); mapViewRef?.onStop() }
+        onDispose {
+            searchSession?.cancel()
+            mapViewRef?.onStop()
+        }
     }
 }
 
@@ -254,7 +249,7 @@ private fun SetupCard() {
             Spacer(Modifier.height(6.dp))
             Text("Добавьте MAPKIT_API_KEY в local.properties и пересоберите приложение.")
             Spacer(Modifier.height(6.dp))
-            Text("Демо-режим интерфейса готов; после ключа появится реальная карта Яндекс Карт.")
+            Text("Интерфейс MVP готов; после ключа появится реальная карта Яндекс Карт, поиск и маршруты.")
         }
     }
 }
